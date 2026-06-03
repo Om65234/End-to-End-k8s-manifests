@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: backend
+
+spec:
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app: backend
+
+  template:
+    metadata:
+      labels:
+        app: backend
+
+    spec:
+      containers:
+        - name: backend
+
+          image: omkar1907/mern-backend:v31
+
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 3500
+
+          env:
+            - name: PORT
+              value: "3500"
+
+            - name: MONGO_CONN_STR
+              value: mongodb://root:rootpassword@mongodb:27017/tasks?authSource=admin
+
+            - name: USE_DB_AUTH
+              value: "true"   
