@@ -5,7 +5,7 @@ metadata:
   name: mongo-pvc
 
 spec:
-  storageClassName: gp3
+  storageClassName: mongo-gp3
 
   accessModes:
     - ReadWriteOnce
