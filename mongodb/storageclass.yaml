@@ -10,7 +10,7 @@ parameters:
   type: gp3
   fsType: ext4
 
-volumeBindingMode: WaitForFirstConsumer
+volumeBindingMode: Immediate
 allowVolumeExpansion: true
 
 reclaimPolicy: Delete
