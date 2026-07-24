@@ -17,6 +17,9 @@ spec:
         app: backend
 
     spec:
+      nodeSelector:
+        workload: app
+
       containers:
         - name: backend
 

@@ -17,6 +17,9 @@ spec:
         app: frontend
 
     spec:
+      nodeSelector:
+        workload: app
+
       containers:
         - name: frontend
 

@@ -17,6 +17,9 @@ spec:
         app: mongodb
 
     spec:
+      nodeSelector:
+        workload: mongodb
+
       containers:
         - name: mongodb
           image: mongo:5.0

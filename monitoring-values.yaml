@@ -1,0 +1,91 @@
+grafana:
+  assertNoLeakedSecrets: false
+
+  nodeSelector:
+    role: monitoring
+
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: monitoring
+      effect: NoSchedule
+
+  grafana.ini:
+    smtp:
+      enabled: true
+      host: smtp.gmail.com:587
+      user: padiyaromkar55@gmail.com
+      password: "pxmu ddnr udyn iaws"
+      from_address: padiyaromkar55@gmail.com
+      from_name: Grafana Alerts
+      skip_verify: true
+      startTLS_policy: MandatoryStartTLS
+
+  persistence:
+    enabled: true
+    storageClassName: gp3
+    accessModes:
+      - ReadWriteOnce
+    size: 10Gi
+
+prometheus:
+  prometheusSpec:
+    nodeSelector:
+      role: monitoring
+
+    tolerations:
+      - key: dedicated
+        operator: Equal
+        value: monitoring
+        effect: NoSchedule
+
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp3
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 20Gi
+
+alertmanager:
+  alertmanagerSpec:
+    nodeSelector:
+      role: monitoring
+
+    tolerations:
+      - key: dedicated
+        operator: Equal
+        value: monitoring
+        effect: NoSchedule
+
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp3
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 5Gi
+
+kube-state-metrics:
+  nodeSelector:
+    role: monitoring
+
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: monitoring
+      effect: NoSchedule
+
+prometheusOperator:
+  nodeSelector:
+    role: monitoring
+
+  tolerations:
+    - key: dedicated
+      operator: Equal
+      value: monitoring
+      effect: NoSchedule
