@@ -11,6 +11,9 @@ grafana:
       effect: NoSchedule
 
   grafana.ini:
+    server:
+      root_url: "%(protocol)s://%(domain)s/grafana"
+      serve_from_sub_path: true
     smtp:
       enabled: true
       host: smtp.gmail.com:587
