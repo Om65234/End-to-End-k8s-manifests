@@ -10,33 +10,43 @@ Kubernetes manifests for the **MERN Task App** deployed via **ArgoCD** (GitOps).
 Jenkins CI Pipeline (Jenkins-pipeline repo)
       │  sed replaces image tag, git push
       ▼
- This Repo (End-to-End-k8s-manifests)
+ This Repo (k8s manifests)
       │  ArgoCD watches & auto-syncs
       ▼
-  Kubernetes Cluster
-  ┌──────────────────────────────────────────┐
-  │  Namespace: default                      │
-  │  ┌──────────┐  ┌──────────┐  ┌───────┐  │
-  │  │ Frontend │  │ Backend  │  │MongoDB│  │
-  │  │ Deploy   │  │ Deploy   │  │Deploy │  │
-  │  │ (React)  │  │(Express) │  │       │  │
-  │  └────┬─────┘  └────┬─────┘  └───┬───┘  │
-  │       │             │             │      │
-  │  ┌────▼─────┐  ┌────▼─────┐  ┌───▼───┐  │
-  │  │  Svc:80  │  │ Svc:3500 │  │Svc:   │  │
-  │  └────┬─────┘  └──────────┘  │27017  │  │
-  │       │                      └───────┘  │
-  │  ┌────▼─────────────────────┐           │
-  │  │     NGINX Ingress         │           │
-  │  │  / → frontend:80          │           │
-  │  │  /api → backend:3500      │           │
-  │  └───────────────────────────┘           │
-  │                                          │
-  │  PersistentVolumeClaim ─► MongoDB        │
-  └──────────────────────────────────────────┘
-        │
-        ▼
-  Prometheus + Grafana (Monitoring)
+   AWS EKS Cluster
+   ┌──────────────────────────────────────────────────────┐
+   │  Namespace: default                                  │
+   │  ┌──────────┐  ┌──────────┐  ┌───────────────────┐  │
+   │  │ Frontend │  │ Backend  │  │  MongoDB           │  │
+   │  │ Deploy   │  │ Deploy   │  │  StatefulSet       │  │
+   │  │ 2 pods   │  │ 2 pods   │  │  1 pod + gp3 PVC  │  │
+   │  └────┬─────┘  └────┬─────┘  └────────────────────┘  │
+   │       └──────────────────────────────────┐           │
+   │  ┌───────────────────────────────────────▼──────────┐ │
+   │  │            NGINX Ingress Controller               │ │
+   │  │   /         → frontend-service:80                │ │
+   │  │   /api      → backend-service:3500               │ │
+   │  │   /argocd   → argocd-server:80 (insecure)        │ │
+   │  │   /grafana  → monitoring-grafana:80               │ │
+   │  └────────────────────┬──────────────────────────────┘ │
+   └───────────────────────┼──────────────────────────────┘
+                           │
+   ┌───────────────────────▼──────────────────────────────┐
+   │           AWS Network Load Balancer (NLB)            │
+   │   Single external endpoint for all services          │
+   └──────────────────────────────────────────────────────┘
+
+   ┌──────────────────────────────────────────────────────┐
+   │  Namespace: monitoring                               │
+   │  Prometheus ──────────► Grafana (at /grafana)        │
+   │  Alertmanager          kube-state-metrics            │
+   │  node-exporter (DaemonSet on all nodes)              │
+   └──────────────────────────────────────────────────────┘
+
+   ┌──────────────────────────────────────────────────────┐
+   │  Namespace: argocd                                   │
+   │  ArgoCD (at /argocd, --insecure mode)                │
+   └──────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -44,112 +54,85 @@ Jenkins CI Pipeline (Jenkins-pipeline repo)
 ## 🗂️ Repository Structure
 
 ```
-k8s-manifests/
+k8s/
 ├── frontend/
-│   ├── frontend-deployment.yaml   # React app — 2 replicas, pulls omkar1907/mern-frontend:<tag>
-│   └── frontend-service.yaml      # ClusterIP service on port 80
+│   ├── frontend-deployment.yaml    # React app — 2 replicas, nodeSelector: workload=app
+│   └── frontend-service.yaml       # ClusterIP service on port 80
 │
 ├── backend/
-│   ├── backend-deployment.yaml    # Express API — 2 replicas, pulls omkar1907/mern-backend:<tag>
-│   └── backend-service.yaml       # ClusterIP service on port 3500
+│   ├── backend-deployment.yaml     # Express API — 2 replicas, nodeSelector: workload=app
+│   └── backend-service.yaml        # ClusterIP service on port 3500
 │
 ├── mongodb/
-│   ├── mongo-deployment.yaml      # MongoDB 5.0 — 1 replica, uses PVC for persistence
-│   ├── mongo-service.yaml         # ClusterIP service on port 27017
-│   ├── mongo-pvc.yaml             # PersistentVolumeClaim — 1Gi, StorageClass: gp3
-│   ├── mongo-secret.yaml          # Kubernetes Secret for DB credentials
-│   └── storageclass.yaml          # gp3 StorageClass using EBS CSI driver (ebs.csi.aws.com)
+│   ├── mongo-deployment.yaml       # MongoDB 5.0 StatefulSet — PVC at /data/db
+│   ├── mongo-service.yaml          # ClusterIP service on port 27017
+│   ├── mongo-pvc.yaml              # PVC — 1Gi, StorageClass: mongo-gp3
+│   ├── mongo-secret.yaml           # K8s Secret for DB credentials
+│   └── storageclass.yaml           # mongo-gp3 StorageClass (ebs.csi.aws.com)
 │
-└── ingress.yaml                   # NGINX Ingress — routes / and /api (no host restriction)
+├── gp3-storageclass.yaml           # gp3 StorageClass — shared by Grafana & Prometheus
+├── ingress.yaml                    # NGINX Ingress — path-based routing, no host restriction
+├── argocd-values.yaml              # Helm values for ArgoCD (nodeSelector, --rootpath)
+└── monitoring-values.yaml          # Helm values for kube-prometheus-stack
 ```
 
 ---
 
 ## 🛠️ Tech Stack
 
-| Component       | Technology                              |
-|-----------------|-----------------------------------------|
-| Container Orch  | Kubernetes (K8s)                                    |
-| GitOps CD       | ArgoCD                                              |
-| Ingress         | NGINX Ingress Controller                            |
-| Frontend Image  | `omkar1907/mern-frontend:<tag>` (React + Nginx)     |
-| Backend Image   | `omkar1907/mern-backend:<tag>` (Node.js + Express)  |
-| Database        | MongoDB 5.0                                         |
-| Storage         | gp3 PVC via **EBS CSI Driver** (`ebs.csi.aws.com`)  |
-| Monitoring      | Prometheus + Grafana                                |
+| Component        | Technology                                           |
+|------------------|------------------------------------------------------|
+| Container Orch   | Kubernetes 1.31 (AWS EKS)                            |
+| GitOps CD        | ArgoCD (Helm install, path `/argocd`)                |
+| Ingress          | NGINX Ingress Controller — path-based routing        |
+| Frontend Image   | `omkar1907/mern-frontend:<tag>` (React + Nginx)      |
+| Backend Image    | `omkar1907/mern-backend:<tag>` (Node.js + Express)   |
+| Database         | MongoDB 5.0 (StatefulSet)                            |
+| Storage          | AWS EBS gp3 via EBS CSI Driver (`ebs.csi.aws.com`)   |
+| Monitoring       | kube-prometheus-stack (Prometheus + Grafana + Alertmanager) |
 
 ---
 
 ## 📄 Manifest Details
 
-### Frontend
+### Node Groups & Labels
 
-**`frontend/frontend-deployment.yaml`**
-- Image: `omkar1907/mern-frontend:<tag>` *(tag auto-updated by Jenkins)*
-- Replicas: configurable (default 1)
-- Container port: `80`
+The EKS cluster has **3 node groups**, each labelled for workload separation:
 
-**`frontend/frontend-service.yaml`**
-- Type: `ClusterIP`
-- Port: `80`
+| Node Label | Workload |
+|---|---|
+| `role=monitoring` | ArgoCD, Grafana, Prometheus, Alertmanager |
+| `workload=app` | Frontend, Backend, MongoDB |
 
----
+> ⚠️ **Important:** Application nodes must have the `workload=app` label. If pods are `Pending`, run:
+> ```bash
+> kubectl label node <node-name> workload=app
+> ```
 
-### Backend
+### StorageClasses
 
-**`backend/backend-deployment.yaml`**
-- Image: `omkar1907/mern-backend:<tag>` *(tag auto-updated by Jenkins)*
-- Replicas: `2`
-- Container port: `3500`
-- Env vars injected:
-  - `PORT=3500`
-  - `MONGO_CONN_STR=mongodb://root:<password>@mongodb:27017/tasks?authSource=admin`
-  - `USE_DB_AUTH=true`
+Two StorageClasses are used:
 
-**`backend/backend-service.yaml`**
-- Type: `ClusterIP`
-- Port: `3500`
+| Name | Used By | File |
+|---|---|---|
+| `gp3` | Grafana (10Gi), Prometheus (20Gi), Alertmanager (5Gi) | `gp3-storageclass.yaml` |
+| `mongo-gp3` | MongoDB (1Gi) | `mongodb/storageclass.yaml` |
 
----
+Both use `provisioner: ebs.csi.aws.com` with `volumeBindingMode: WaitForFirstConsumer`.
 
-### MongoDB
+### Ingress Routing
 
-**`mongodb/mongo-deployment.yaml`**
-- Image: `mongo:5.0`
-- Replicas: `1`
-- Credentials loaded from `mongo-secret` Kubernetes Secret
-- Data persisted via `mongo-pvc` PersistentVolumeClaim mounted at `/data/db`
+**`ingress.yaml`** — single NGINX Ingress, no host restriction, path-based:
 
-**`mongodb/mongo-pvc.yaml`**
-- StorageClass: `gp3` (uses EBS CSI driver — required for EKS 1.23+)
-- Access mode: `ReadWriteOnce`
-- Size: `1Gi`
-- Stores MongoDB data across pod restarts
+| Path | Service | Namespace |
+|---|---|---|
+| `/` | `frontend:80` | `default` |
+| `/api` | `backend:3500` | `default` |
+| `/argocd` | `argocd-server:80` | `argocd` |
+| `/grafana` | `monitoring-grafana:80` | `monitoring` |
 
-**`mongodb/storageclass.yaml`** *(new)*
-- Name: `gp3`
-- Provisioner: `ebs.csi.aws.com` (AWS EBS CSI Driver)
-- Volume type: `gp3`, fsType: `ext4`
-- `volumeBindingMode: WaitForFirstConsumer` — volume created only when pod is scheduled
-
-**`mongodb/mongo-secret.yaml`**
-- Holds base64-encoded `mongo-root-username` and `mongo-root-password`
-- ⚠️ **Do not commit real credentials in plain text** — use Sealed Secrets or an external secrets manager in production
-
-**`mongodb/mongo-service.yaml`**
-- Type: `ClusterIP`
-- Port: `27017`
-
----
-
-### Ingress
-
-**`ingress.yaml`**
-- Class: `nginx`
-- No host restriction — accepts requests from any hostname / IP (works with any ALB or LoadBalancer)
-- Routes:
-  - `/` → `frontend:80`
-  - `/api` → `backend:3500`
+> ArgoCD runs with `--insecure` + `--rootpath=/argocd`  
+> Grafana runs with `serve_from_sub_path: true` + `root_url: .../grafana`
 
 ---
 
@@ -157,53 +140,56 @@ k8s-manifests/
 
 ### Prerequisites
 
-- A running Kubernetes cluster (EKS recommended — K8s 1.23+)
-- `kubectl` configured to point to the cluster
+- AWS EKS cluster (K8s 1.23+) with `kubectl` configured
 - NGINX Ingress Controller installed
-- **AWS EBS CSI Driver** installed (`aws-ebs-csi-driver` addon) with `AmazonEBSCSIDriverPolicy` on node IAM role
-- ArgoCD installed and configured
+- AWS EBS CSI Driver installed (`aws-ebs-csi-driver` EKS addon)
+- Helm 3.12+, ArgoCD installed via Helm (`argo/argo-cd`)
+- kube-prometheus-stack installed via Helm (`prometheus-community/kube-prometheus-stack`)
 
-### Manual Apply (without ArgoCD)
+### Step-by-Step Manual Apply
 
 ```bash
-# 0. Apply StorageClass first (gp3 for EBS CSI)
+# 1. Apply StorageClasses first
+kubectl apply -f gp3-storageclass.yaml
 kubectl apply -f mongodb/storageclass.yaml
 
-# 1. Apply secrets
+# 2. Apply MongoDB resources (in order)
 kubectl apply -f mongodb/mongo-secret.yaml
-
-# 2. Apply storage
 kubectl apply -f mongodb/mongo-pvc.yaml
-
-# 3. Deploy MongoDB
 kubectl apply -f mongodb/mongo-deployment.yaml
 kubectl apply -f mongodb/mongo-service.yaml
 
-# 4. Deploy Backend
+# 3. Label application nodes (required for nodeSelector)
+kubectl label node <app-node-1> <app-node-2> workload=app
+
+# 4. Deploy Backend & Frontend
 kubectl apply -f backend/backend-deployment.yaml
 kubectl apply -f backend/backend-service.yaml
-
-# 5. Deploy Frontend
 kubectl apply -f frontend/frontend-deployment.yaml
 kubectl apply -f frontend/frontend-service.yaml
 
-# 6. Apply Ingress
+# 5. Apply Ingress
 kubectl apply -f ingress.yaml
 
-# Verify all pods are running
-kubectl get pods
-kubectl get svc
-kubectl get ingress
-kubectl get pvc
+# 6. Install ArgoCD via Helm
+helm repo add argo https://argoproj.github.io/argo-helm
+helm install argocd argo/argo-cd -n argocd -f argocd-values.yaml
+
+# 7. Install kube-prometheus-stack via Helm
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm install monitoring prometheus-community/kube-prometheus-stack \
+  -n monitoring -f monitoring-values.yaml
+
+# 8. Verify everything
+kubectl get pods -A
+kubectl get pvc -A
+kubectl get ingress -A
 ```
 
 ### Via ArgoCD (GitOps — Recommended)
 
-ArgoCD is configured to watch this repository. Any push to `main` (e.g., Jenkins updating an image tag) automatically triggers a sync:
-
-1. **Create ArgoCD Application** (one-time setup):
-
 ```yaml
+# argocd-app.yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -226,12 +212,37 @@ spec:
 
 ```bash
 kubectl apply -f argocd-app.yaml
+argocd app get mern-app
 ```
 
-2. **Watch ArgoCD sync** in the UI or via CLI:
+---
+
+## 🌐 Accessing Services
+
+All services share **one Load Balancer** via path-based routing:
+
+| Service | URL |
+|---------|-----|
+| MERN App | `http://<ELB>/` |
+| Backend API | `http://<ELB>/api` |
+| ArgoCD UI | `http://<ELB>/argocd` |
+| Grafana UI | `http://<ELB>/grafana` |
+
+**Get the ELB address:**
 ```bash
-argocd app get mern-app
-argocd app sync mern-app
+kubectl get svc -n ingress-nginx ingress-nginx-controller \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+```
+
+**Get credentials:**
+```bash
+# ArgoCD admin password
+kubectl -n argocd get secret argocd-initial-admin-secret \
+  -o jsonpath="{.data.password}" | base64 -d
+
+# Grafana admin password
+kubectl -n monitoring get secrets monitoring-grafana \
+  -o jsonpath="{.data.admin-password}" | base64 -d
 ```
 
 ---
@@ -243,51 +254,33 @@ Every Jenkins build automatically:
 1. Clones this repo
 2. Runs `sed` to replace image tags:
    ```bash
-   sed -i "s|image: omkar1907/mern-frontend:.*|image: omkar1907/mern-frontend:v<BUILD_NUMBER>|" frontend/frontend-deployment.yaml
-   sed -i "s|image: omkar1907/mern-backend:.*|image: omkar1907/mern-backend:v<BUILD_NUMBER>|" backend/backend-deployment.yaml
+   sed -i "s|image: omkar1907/mern-frontend:.*|image: omkar1907/mern-frontend:v<N>|" frontend/frontend-deployment.yaml
+   sed -i "s|image: omkar1907/mern-backend:.*|image: omkar1907/mern-backend:v<N>|" backend/backend-deployment.yaml
    ```
-3. Commits and pushes → ArgoCD detects the diff and rolls out the new version
+3. Commits and pushes → ArgoCD detects diff → rolling update on EKS
 
 ---
 
-## 📊 Monitoring — Prometheus & Grafana
+## 📊 Monitoring
 
-The cluster is monitored using **Prometheus** (metrics collection) and **Grafana** (dashboards).
+Helm release name: `monitoring` (namespace: `monitoring`)
 
-### What's Monitored
+| Component | Access |
+|---|---|
+| Grafana | `http://<ELB>/grafana` (admin / see secret above) |
+| Prometheus | `kubectl port-forward svc/prometheus-operated 9090:9090 -n monitoring` |
+| Alertmanager | `kubectl port-forward svc/alertmanager-operated 9093:9093 -n monitoring` |
 
-| Source | Metrics |
-|--------|---------|
-| Kubernetes Nodes | CPU, Memory, Disk, Network |
-| Pods / Deployments | Restarts, resource usage, scheduling |
-| NGINX Ingress | Request rate, error rate, latency |
-| MongoDB (optional) | Connections, ops/sec via `mongodb-exporter` |
-
-### Accessing Grafana
-```bash
-# Port-forward Grafana
-kubectl port-forward svc/grafana 3000:80 -n monitoring
-# Open: http://localhost:3000
-# Default login: admin / prom-operator
-```
-
-### Accessing Prometheus
-```bash
-kubectl port-forward svc/prometheus-operated 9090:9090 -n monitoring
-# Open: http://localhost:9090
-```
-
-### Useful PromQL Queries
-
+**Useful PromQL:**
 ```promql
-# Pod restart count
+# Pod restarts
 kube_pod_container_status_restarts_total{namespace="default"}
 
-# CPU usage by pod
-rate(container_cpu_usage_seconds_total{namespace="default"}[5m])
+# CPU usage per pod
+rate(container_cpu_usage_seconds_total{namespace="default", container!=""}[5m])
 
-# Memory usage by pod
-container_memory_usage_bytes{namespace="default"}
+# Memory per pod
+container_memory_usage_bytes{namespace="default", container!=""}
 
 # NGINX request rate
 rate(nginx_ingress_controller_requests[2m])
@@ -298,23 +291,41 @@ rate(nginx_ingress_controller_requests[2m])
 ## 🔍 Troubleshooting
 
 ```bash
-# Check pod status
-kubectl get pods -o wide
+# Pod status across all namespaces
+kubectl get pods -A
 
-# Check pod logs
-kubectl logs deployment/backend
-kubectl logs deployment/frontend
-kubectl logs deployment/mongodb
+# Describe a pending/failing pod
+kubectl describe pod <pod-name> -n <namespace>
 
-# Describe pod for events
-kubectl describe pod <pod-name>
+# Check PVC binding
+kubectl get pvc -A
 
-# Check ingress
-kubectl describe ingress mern-ingress
+# Check StorageClass exists
+kubectl get storageclass
 
-# Exec into backend pod
-kubectl exec -it deployment/backend -- sh
+# Pod logs
+kubectl logs deployment/backend --tail=100
+kubectl logs deployment/frontend --tail=100
+
+# Ingress rules
+kubectl describe ingress -A
+
+# Node labels (verify workload=app)
+kubectl get nodes --show-labels
+
+# ArgoCD sync status
+argocd app get mern-app
+argocd app sync mern-app
 ```
+
+**Common issues:**
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Pod `Pending` — unbound PVC | StorageClass `gp3` or `mongo-gp3` missing | `kubectl apply -f gp3-storageclass.yaml` |
+| Pod `Pending` — no matching node | Missing `workload=app` node label | `kubectl label node <name> workload=app` |
+| 404 on `/argocd` or `/grafana` | ArgoCD/Grafana sub-path not configured | Check `argocd-values.yaml` for `--rootpath` and `monitoring-values.yaml` for `serve_from_sub_path` |
+| Grafana redirects to `localhost` | `root_url` misconfigured | Ensure `serve_from_sub_path: true` and correct `root_url` in Helm values |
 
 ---
 
